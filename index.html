@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>3D Table Tennis</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<style>
+html, body {
+  margin:0;
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:black;
+  touch-action:none;
+}
+canvas { display:block; }
+
+#score {
+  position:absolute;
+  top:20px;
+  width:100%;
+  text-align:center;
+  font-size:24px;
+  font-family:Arial;
+  color:white;
+  z-index:10;
+}
+</style>
+</head>
+<body>
+
+<div id="score">Player: 0 | AI: 0</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+
+<script>
+/* ---------------- SCENE ---------------- */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202020);
+
+/* ---------------- CAMERA ---------------- */
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000);
+
+/* ---------------- RENDERER ---------------- */
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+/* ---------------- LIGHT ---------------- */
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const light = new THREE.DirectionalLight(0xffffff, 0.8);
+light.position.set(10,20,10);
+scene.add(light);
+
+/* ---------------- TABLE ---------------- */
+const table = new THREE.Mesh(
+  new THREE.BoxGeometry(20,1,30),
+  new THREE.MeshStandardMaterial({color:0x006400})
+);
+table.position.y = -1;
+scene.add(table);
+
+/* ---- TABLE DIMENSIONS (for camera fit) ---- */
+const TABLE_WIDTH = 20;
+const TABLE_DEPTH = 30;
+const TABLE_MARGIN = 1.1;
+
+/* ---------------- CAMERA FIT ---------------- */
+function fitCameraToTable() {
+  const aspect = window.innerWidth / window.innerHeight;
+
+  const vFOV = THREE.MathUtils.degToRad(camera.fov);
+  const hFOV = 2 * Math.atan(Math.tan(vFOV / 2) * aspect);
+
+  const fitWidthDist = (TABLE_WIDTH * TABLE_MARGIN) / (2 * Math.tan(hFOV / 2));
+  const fitDepthDist = (TABLE_DEPTH * TABLE_MARGIN) / (2 * Math.tan(vFOV / 2));
+
+  const distance = Math.max(fitWidthDist, fitDepthDist);
+
+  camera.position.set(0, distance * 0.75, distance * 1.15);
+  camera.lookAt(0,0,0);
+}
+fitCameraToTable();
+
+/* ---------------- PADDLES ---------------- */
+const paddleWidth = 4;
+const paddleDepth = 1;
+const paddleGeo = new THREE.BoxGeometry(paddleWidth,1,paddleDepth);
+
+const playerPaddle = new THREE.Mesh(
+  paddleGeo, new THREE.MeshStandardMaterial({color:0x2196f3})
+);
+playerPaddle.position.set(0,0,13);
+scene.add(playerPaddle);
+
+const aiPaddle = new THREE.Mesh(
+  paddleGeo, new THREE.MeshStandardMaterial({color:0xf44336})
+);
+aiPaddle.position.set(0,0,-13);
+scene.add(aiPaddle);
+
+/* ---------------- BALL ---------------- */
+const ball = new THREE.Mesh(
+  new THREE.SphereGeometry(0.6,32,32),
+  new THREE.MeshStandardMaterial({color:0xffffff})
+);
+scene.add(ball);
+
+let ballVelocity = new THREE.Vector3(0.12,0,0.25);
+let ballSpin = 0;
+
+/* ---------------- SCORE ---------------- */
+let playerScore = 0;
+let aiScore = 0;
+const scoreDiv = document.getElementById("score");
+
+function updateScore() {
+  scoreDiv.textContent = `Player: ${playerScore} | AI: ${aiScore}`;
+}
+
+/* ---------------- INPUT ---------------- */
+let lastPaddleX = 0;
+let paddleSpeed = 0;
+
+function movePaddle(x) {
+  paddleSpeed = x - lastPaddleX;
+  lastPaddleX = x;
+  playerPaddle.position.x = THREE.MathUtils.clamp(x, -8, 8);
+}
+
+addEventListener("mousemove", e => {
+  movePaddle((e.clientX / innerWidth) * 20 - 10);
+});
+
+addEventListener("touchmove", e => {
+  movePaddle((e.touches[0].clientX / innerWidth) * 20 - 10);
+}, { passive:true });
+
+/* ---------------- COLLISION ---------------- */
+function paddleHit(paddle, direction, isPlayer) {
+  const offset = ball.position.x - paddle.position.x;
+  const norm = offset / (paddleWidth / 2);
+
+  ballVelocity.x += norm * 0.12;
+
+  if (isPlayer) ballSpin += paddleSpeed * 0.02;
+
+  let speedMultiplier = 1;
+  if (Math.abs(norm) < 0.2) speedMultiplier = 0.9;
+  else if (Math.abs(norm) < 0.6) speedMultiplier = 1.15;
+  else speedMultiplier = 1.35;
+
+  if (isPlayer && Math.abs(paddleSpeed) > 0.4 && Math.abs(norm) > 0.5) {
+    speedMultiplier = 1.6;
+  }
+
+  ballVelocity.multiplyScalar(speedMultiplier);
+  ballVelocity.setLength(
+    THREE.MathUtils.clamp(ballVelocity.length(), 0.15, 0.9)
+  );
+  ballVelocity.z = Math.abs(ballVelocity.z) * direction;
+  ball.position.z += direction * (paddleDepth + 0.8);
+}
+
+/* ---------------- RESET BALL ---------------- */
+function resetBall(playerServe) {
+  ball.position.set(0,0,0);
+  ballVelocity.set(
+    (Math.random()-0.5)*0.2,
+    0,
+    playerServe ? -0.25 : 0.25
+  );
+  ballSpin = 0;
+}
+
+/* ---------------- GAME LOOP ---------------- */
+function animate() {
+  requestAnimationFrame(animate);
+
+  ballVelocity.x += ballSpin;
+  ballSpin *= 0.98;
+  ball.position.add(ballVelocity);
+
+  if (Math.abs(ball.position.x) > 9) {
+    ballVelocity.x *= -1;
+    ballSpin *= -0.5;
+  }
+
+  if (ballVelocity.z > 0 &&
+      ball.position.z >= playerPaddle.position.z - 0.6 &&
+      Math.abs(ball.position.x - playerPaddle.position.x) < paddleWidth/2) {
+    paddleHit(playerPaddle, -1, true);
+  }
+
+  if (ballVelocity.z < 0 &&
+      ball.position.z <= aiPaddle.position.z + 0.6 &&
+      Math.abs(ball.position.x - aiPaddle.position.x) < paddleWidth/2) {
+    paddleHit(aiPaddle, 1, false);
+  }
+
+  if (ball.position.z > 16) { aiScore++; updateScore(); resetBall(false); }
+  if (ball.position.z < -16) { playerScore++; updateScore(); resetBall(true); }
+
+  /* ---------------- SMART AI ---------------- */
+  let predictedX = ball.position.x +
+    (ballVelocity.x / Math.abs(ballVelocity.z)) *
+    (Math.abs(aiPaddle.position.z - ball.position.z));
+
+  predictedX = THREE.MathUtils.clamp(predictedX, -8, 8);
+
+  let distance = predictedX - aiPaddle.position.x;
+  let aiSpeed = 0.08 + 0.12 * Math.abs(distance)/20;
+  aiPaddle.position.x += THREE.MathUtils.clamp(distance, -aiSpeed, aiSpeed);
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+/* ---------------- RESIZE ---------------- */
+addEventListener("resize", () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  fitCameraToTable();
+});
+</script>
+
+</body>
+</html>
